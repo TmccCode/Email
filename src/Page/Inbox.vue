@@ -1,11 +1,19 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue"
-import { useRouter } from "vue-router"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import { Label } from "@/components/ui/label"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import { ChevronDown, RotateCw, Trash2 } from "lucide-vue-next"
 
-type MailFilter = "all" | "read" | "unread"
+type MailFilter = "all" | "unread" | "read"
 
 interface ApiMessage {
   id: number
@@ -31,12 +39,10 @@ interface MessageItem {
 }
 
 const STORAGE_SECRET = "simpleInboxSecret"
-const STORAGE_MAILBOX = "simpleInboxMailbox"
 const API_BASE = "https://eamilapi.saas-176001.workers.dev"
 
-const router = useRouter()
-
 const secret = ref<string | null>(null)
+const mailboxEmail = ref("")
 const messages = ref<MessageItem[]>([])
 const activeId = ref<number | null>(null)
 
@@ -51,16 +57,10 @@ const paging = ref({ page: 1, pageSize: 10, total: 0 })
 const deleteLoading = ref(false)
 const showDeleteConfirm = ref(false)
 
-const logout = () => {
-  if (typeof window !== "undefined") {
-    window.sessionStorage.removeItem(STORAGE_SECRET)
-    window.sessionStorage.removeItem(STORAGE_MAILBOX)
-  }
-  secret.value = null
-  messages.value = []
-  activeId.value = null
-  router.replace({ name: "home" })
-}
+const keyModalOpen = ref(false)
+const keyInput = ref("")
+const keySubmitting = ref(false)
+const keyError = ref("")
 
 const decodeBase64 = (value: string) => {
   const cleaned = value.replace(/\s+/g, "")
@@ -144,14 +144,14 @@ const extractBodies = (raw: string | null): { text: string; html: string | null 
   }
 
   if (!plain) {
-    const maybeBase64 = raw.replace(/[\r\n-_=]+/g, "")
+    const maybeBase64 = raw?.replace(/[\r\n-_=]+/g, "") ?? ""
     if (/^[A-Za-z0-9+/]+={0,2}$/.test(maybeBase64)) {
       plain = decodeBase64(maybeBase64)
     }
   }
 
   return {
-    text: plain?.trim() || raw.trim() || "（无正文内容）",
+    text: plain?.trim() || raw?.trim() || "（无正文内容）",
     html,
   }
 }
@@ -193,16 +193,9 @@ const mapMessage = (item: ApiMessage): MessageItem => {
 
 const filteredMessages = computed(() => {
   const q = keyword.value.trim().toLowerCase()
-  let data = messages.value
+  if (!q) return messages.value
 
-  if (filter.value === "unread") {
-    data = data.filter((item) => item.unread)
-  } else if (filter.value === "read") {
-    data = data.filter((item) => !item.unread)
-  }
-
-  if (!q) return data
-  return data.filter((item) =>
+  return messages.value.filter((item) =>
     [item.subject, item.from, item.preview]
       .filter(Boolean)
       .some((value) => value.toLowerCase().includes(q)),
@@ -213,40 +206,55 @@ const activeMessage = computed(() =>
   messages.value.find((item) => item.id === activeId.value) ?? null,
 )
 
+const ensureSecret = (message = "请输入访问密钥") => {
+  listError.value = message
+  keyError.value = message
+  keyInput.value = ""
+  keyModalOpen.value = true
+}
+
+const handleInvalidSecret = (message: string) => {
+  if (typeof window !== "undefined") {
+    window.sessionStorage.removeItem(STORAGE_SECRET)
+  }
+  secret.value = null
+  messages.value = []
+  paging.value = { page: 1, pageSize: paging.value.pageSize, total: 0 }
+  mailboxEmail.value = ""
+  ensureSecret(message)
+}
+
 const fetchMessages = async (pageParam = 1) => {
-  if (!secret.value) return
+  if (!secret.value) {
+    ensureSecret()
+    return
+  }
 
   loadingList.value = true
   listError.value = ""
 
+  const params = new URLSearchParams({
+    key: secret.value,
+    page: String(pageParam),
+    limit: String(paging.value.pageSize),
+  })
+
+  if (filter.value === "unread") {
+    params.set("status", "o1")
+  } else if (filter.value === "read") {
+    params.set("status", "o2")
+  }
+
   try {
-    const payload: Record<string, unknown> = {
-      key: secret.value,
-      page: pageParam,
-      pageSize: paging.value.pageSize,
-    }
-
-    if (filter.value === "unread") {
-      payload.status = "o1"
-    } else if (filter.value === "read") {
-      payload.status = "o2"
-    }
-
-    const response = await fetch(`${API_BASE}/inbox`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    })
-
+    const response = await fetch(`${API_BASE}/inbox?${params.toString()}`, { method: "GET" })
     const data = (await response.json()) as {
       ok: boolean
       msg?: string
-      list?: ApiMessage[]
+      email?: string
       page?: number
-      pageSize?: number
+      limit?: number
       total?: number
+      list?: ApiMessage[]
     }
 
     if (!response.ok || !data.ok) {
@@ -254,88 +262,97 @@ const fetchMessages = async (pageParam = 1) => {
         typeof data.msg === "string" && data.msg.trim()
           ? data.msg.trim()
           : "加载收件箱失败，请稍后重试。"
-      if ([401, 403, 404].includes(response.status)) {
-        if (typeof window !== "undefined") {
-          window.sessionStorage.removeItem(STORAGE_SECRET)
-          window.sessionStorage.removeItem(STORAGE_MAILBOX)
-        }
-        router.replace({ name: "home" })
+      if (message.includes("密钥")) {
+        handleInvalidSecret(message)
+      } else {
+        listError.value = message
       }
-      throw new Error(message)
+      return
     }
+
+    mailboxEmail.value = typeof data.email === "string" ? data.email : mailboxEmail.value
 
     const mapped = (data.list ?? []).map(mapMessage)
     messages.value = mapped
 
     paging.value = {
       page: data.page ?? pageParam,
-      pageSize: data.pageSize ?? paging.value.pageSize,
+      pageSize: data.limit ?? paging.value.pageSize,
       total: data.total ?? mapped.length,
     }
 
-    if (!mapped.some((item) => item.id === (activeId.value ?? NaN))) {
+    if (activeId.value != null && !mapped.some((item) => item.id === activeId.value)) {
       activeId.value = null
     }
   } catch (error) {
-    listError.value =
-      error instanceof Error ? error.message : "加载收件箱失败，请稍后重试。"
+    listError.value = error instanceof Error ? error.message : "加载收件箱失败，请稍后重试。"
   } finally {
     loadingList.value = false
   }
 }
 
-const refresh = () => fetchMessages(paging.value.page)
+const refresh = () => {
+  fetchMessages(paging.value.page)
+}
 
-const markMessageAsRead = async (id: number) => {
-  if (!secret.value) return
+const openSecretModal = () => {
+  if (typeof window !== "undefined") {
+    window.sessionStorage.removeItem(STORAGE_SECRET)
+  }
+  secret.value = null
+  keyInput.value = ""
+  keyError.value = ""
+  keyModalOpen.value = true
+}
 
+const submitSecret = async () => {
+  const value = keyInput.value.trim()
+  if (!value) {
+    keyError.value = "请输入访问密钥"
+    return
+  }
+
+  keySubmitting.value = true
   try {
-    const response = await fetch(`${API_BASE}/read`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ key: secret.value, id }),
-    })
-
-    if (!response.ok) {
-      console.warn("mark read failed", await response.text())
+    secret.value = value
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem(STORAGE_SECRET, value)
     }
-  } catch (error) {
-    console.warn("mark read error", error)
+    keyModalOpen.value = false
+    keyError.value = ""
+    await fetchMessages(1)
+  } finally {
+    keySubmitting.value = false
   }
 }
 
-const openMail = (mail: MessageItem) => {
-  activeId.value = mail.id
-  if (mail.unread) {
-    mail.unread = false
-    markMessageAsRead(mail.id)
+const openMessage = (item: MessageItem) => {
+  activeId.value = item.id
+  if (item.unread) {
+    item.unread = false
   }
 }
 
-const closeMail = () => {
+const closeMessage = () => {
   activeId.value = null
   showDeleteConfirm.value = false
 }
 
 const requestDelete = () => {
-  if (!activeMessage.value) return
+  if (!activeMessage.value || !secret.value) return
   showDeleteConfirm.value = true
 }
 
 const deleteMessage = async () => {
-  const msg = activeMessage.value
-  if (!msg || !secret.value) return
+  const current = activeMessage.value
+  if (!current || !secret.value) return
 
   deleteLoading.value = true
   try {
     const response = await fetch(`${API_BASE}/delete`, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ key: secret.value, id: msg.id }),
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ key: secret.value, id: current.id }),
     })
 
     const data = (await response.json()) as { ok: boolean; msg?: string }
@@ -348,42 +365,54 @@ const deleteMessage = async () => {
       throw new Error(message)
     }
 
-    messages.value = messages.value.filter((item) => item.id !== msg.id)
-    activeId.value = null
+    messages.value = messages.value.filter((item) => item.id !== current.id)
+    paging.value.total = Math.max(0, paging.value.total - 1)
     showDeleteConfirm.value = false
+    activeId.value = null
   } catch (error) {
-    listError.value =
-      error instanceof Error ? error.message : "删除失败，请稍后重试。"
+    listError.value = error instanceof Error ? error.message : "删除失败，请稍后重试。"
   } finally {
     deleteLoading.value = false
   }
 }
 
 onMounted(() => {
-  if (typeof window === "undefined") return
-
-  const storedSecret = window.sessionStorage.getItem(STORAGE_SECRET)
-  if (!storedSecret) {
-    router.replace({ name: "home" })
-    return
+  if (typeof window !== "undefined") {
+    const storedSecret = window.sessionStorage.getItem(STORAGE_SECRET)
+    if (storedSecret) {
+      secret.value = storedSecret
+      fetchMessages(1)
+      return
+    }
   }
-
-  secret.value = storedSecret
-
-  fetchMessages(1)
+  ensureSecret()
 })
 
-watch(filter, (value) => {
-  if (!secret.value) return
+watch(filter, (value, prev) => {
+  if (value === prev) return
   paging.value.page = 1
-  if (value === "unread" || value === "read" || value === "all") {
+  if (secret.value) {
     fetchMessages(1)
   }
+})
+
+watch(
+  () => paging.value.page,
+  (value, prev) => {
+    if (value === prev) return
+    if (secret.value) {
+      fetchMessages(value)
+    }
+  },
+)
+
+watch(keyInput, () => {
+  if (keyError.value) keyError.value = ""
 })
 </script>
 
 <template>
-  <section class="min-h-screen bg-background">
+  <section class="relative min-h-screen bg-background">
     <div class="mx-auto w-full max-w-3xl px-4 py-10 md:px-6">
       <header class="mb-6 flex flex-col gap-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
@@ -392,11 +421,16 @@ watch(filter, (value) => {
             <p class="text-sm text-muted-foreground">
               共 {{ paging.total }} 封邮件
             </p>
+            <p v-if="mailboxEmail" class="text-xs text-muted-foreground">
+              当前邮箱：{{ mailboxEmail }}
+            </p>
           </div>
-          <Button variant="outline" class="h-10 px-4" @click="logout">返回首页</Button>
+          <Button variant="outline" class="h-10 px-4" @click="openSecretModal">
+            返回首页
+          </Button>
         </div>
         <div class="flex min-w-0 flex-wrap items-center gap-2">
-          <div class="relative w-[104px] flex-shrink-0">
+          <div class="relative w-[140px] flex-shrink-0">
             <select
               v-model="filter"
               class="h-10 w-full appearance-none rounded-md border border-input bg-background px-3 pr-8 text-left text-sm text-foreground shadow-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -435,7 +469,7 @@ watch(filter, (value) => {
           v-if="loadingList"
           class="py-14 text-center text-sm text-muted-foreground"
         >
-          正在加载邮件…
+          正在加载邮件...
         </div>
         <div
           v-else-if="listError"
@@ -456,7 +490,7 @@ watch(filter, (value) => {
             class="cursor-pointer px-5 py-4 transition hover:bg-accent/50"
             role="button"
             :aria-label="`打开邮件 ${mail.subject}`"
-            @click="openMail(mail)"
+            @click="openMessage(mail)"
           >
             <div class="flex items-start gap-4">
               <span
@@ -465,10 +499,7 @@ watch(filter, (value) => {
                 :aria-label="mail.unread ? '未读' : '已读'"
               />
               <div class="min-w-0 flex-1">
-                <div
-                  class="flex items-baseline gap-2 text-foreground"
-                  :class="mail.unread ? 'font-medium' : ''"
-                >
+                <div class="flex items-baseline gap-2 text-foreground">
                   <span class="truncate" data-testid="subject">{{ mail.subject }}</span>
                 </div>
                 <p class="truncate text-sm text-muted-foreground" data-testid="meta">
@@ -504,7 +535,7 @@ watch(filter, (value) => {
                 {{ activeMessage.dateLabel }}
               </p>
             </div>
-            <Button variant="ghost" size="sm" @click="closeMail">关闭</Button>
+            <Button variant="ghost" size="sm" @click="closeMessage">关闭</Button>
           </header>
           <main class="max-h-[60vh] overflow-auto px-6 py-6 text-sm leading-7 text-foreground/90">
             <template v-if="activeMessage?.htmlBody">
@@ -517,7 +548,7 @@ watch(filter, (value) => {
             </template>
           </main>
           <footer class="flex justify-end gap-2 border-t border-border px-6 py-4">
-            <Button variant="ghost" @click="closeMail">关闭</Button>
+            <Button variant="ghost" @click="closeMessage">关闭</Button>
             <Button
               variant="destructive"
               class="gap-1"
@@ -535,7 +566,7 @@ watch(filter, (value) => {
     <transition name="fade">
       <div
         v-if="showDeleteConfirm"
-        class="fixed inset-0 z-[60] flex items-center justify-center gap-4 backdrop-blur"
+        class="fixed inset-0 z-[60] flex items-center justify-center gap-4 bg-background/90 p-4 backdrop-blur"
         role="alertdialog"
         aria-modal="true"
       >
@@ -555,6 +586,63 @@ watch(filter, (value) => {
             </Button>
           </div>
         </div>
+      </div>
+    </transition>
+
+    <transition name="fade">
+      <div
+        v-if="keyModalOpen"
+        class="fixed inset-0 z-[70] flex items-center justify-center bg-background/80 p-4 backdrop-blur"
+        role="dialog"
+        aria-modal="true"
+      >
+        <Card class="w-full max-w-sm">
+          <CardHeader>
+            <CardTitle class="text-lg font-semibold text-foreground">输入访问密钥</CardTitle>
+            <CardDescription>请输入后台生成的密钥以读取收件箱。</CardDescription>
+          </CardHeader>
+          <CardContent class="space-y-3">
+            <div class="space-y-2">
+              <Label for="secret-input">访问密钥</Label>
+              <Input
+                id="secret-input"
+                v-model="keyInput"
+                type="password"
+                placeholder="sk_inbox_..."
+                autocomplete="one-time-code"
+                inputmode="text"
+              />
+            </div>
+            <p v-if="keyError" class="text-sm text-destructive">
+              {{ keyError }}
+            </p>
+          </CardContent>
+          <CardFooter class="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              class="flex-1"
+              :disabled="keySubmitting"
+              @click="keyModalOpen = false"
+            >
+              取消
+            </Button>
+            <Button
+              type="button"
+              class="flex-1"
+              :disabled="keySubmitting"
+              @click="submitSecret"
+            >
+              <template v-if="keySubmitting">
+                <RotateCw class="mr-2 size-4 animate-spin" />
+                提交中...
+              </template>
+              <template v-else>
+                保存密钥
+              </template>
+            </Button>
+          </CardFooter>
+        </Card>
       </div>
     </transition>
   </section>
