@@ -47,16 +47,21 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
     const statement = env.TmEmail.prepare<
       [string],
       MailboxRecord
-    >(`SELECT id, secret, domain, local_part, status, created_at FROM mailboxes WHERE secret = ? LIMIT 1`)
+    >(
+      `SELECT id, secret, domain, local_part, status, created_at FROM mailboxes WHERE secret = ? COLLATE NOCASE LIMIT 1`,
+    )
 
     const result = await statement.bind(secret).first()
 
     if (!result) {
-      return json(404, { error: "Mailbox not found" })
+      return json(404, { error: "未找到对应的密钥" })
     }
 
     if (result.status && result.status.toLowerCase() !== "active") {
-      return json(403, { error: "Mailbox inactive", status: result.status })
+      return json(403, {
+        error: "密钥已停用，请联系管理员",
+        status: result.status,
+      })
     }
 
     const createdAt =
@@ -75,6 +80,6 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
     })
   } catch (error) {
     console.error("TmEmail lookup failure", error)
-    return json(500, { error: "Internal Server Error" })
+    return json(500, { error: "服务器内部错误，请稍后重试" })
   }
 }
