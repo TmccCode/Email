@@ -36,7 +36,7 @@ const handleSubmit = async (event: Event) => {
         const data = (await response.json()) as { error?: string }
         if (data?.error) message = data.error
       } catch {
-        // ignore JSON parse error
+        // ignore parse error
       }
       throw new Error(message)
     }

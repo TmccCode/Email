@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from "vue"
 import { useRouter } from "vue-router"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { ChevronDown } from "lucide-vue-next"
+import { ChevronDown, RotateCw, Trash2 } from "lucide-vue-next"
 
 type MailFilter = "all" | "read" | "unread"
 
@@ -32,6 +32,7 @@ interface MessageItem {
   dateLabel: string
   unread: boolean
   raw: ApiMessage
+  textBody: string
 }
 
 const STORAGE_SECRET = "simpleInboxSecret"
@@ -39,21 +40,130 @@ const STORAGE_MAILBOX = "simpleInboxMailbox"
 
 const router = useRouter()
 
-const mailbox = ref<ApiMailbox | null>(null)
 const secret = ref<string | null>(null)
-const mails = ref<MessageItem[]>([])
-const activeMail = ref<MessageItem | null>(null)
+const mailbox = ref<ApiMailbox | null>(null)
+const messages = ref<MessageItem[]>([])
+const activeId = ref<number | null>(null)
+
 const filter = ref<MailFilter>("all")
 const keyword = ref("")
+
 const loadingList = ref(false)
 const listError = ref("")
+
+const deleteLoading = ref(false)
 const showDeleteConfirm = ref(false)
-const paging = ref({ offset: 0, limit: 20, next_offset: null as number | null })
 
-const filteredMails = computed(() => {
+const paging = ref({ offset: 0, limit: 20, nextOffset: null as number | null })
+
+const decodeBase64 = (value: string) => {
+  const cleaned = value.replace(/\s+/g, "")
+  try {
+    const atobFn = (globalThis as typeof globalThis & { atob?: (input: string) => string }).atob
+    if (typeof atobFn === "function") {
+      const binary = atobFn(cleaned)
+      const len = binary.length
+      const bytes = new Uint8Array(len)
+      for (let index = 0; index < len; index += 1) {
+        bytes[index] = binary.charCodeAt(index)
+      }
+      return new TextDecoder("utf-8", { fatal: false }).decode(bytes)
+    }
+  } catch {
+    // ignore
+  }
+  return value
+}
+
+const extractTextBody = (raw: string | null) => {
+  if (!raw) return "（无正文内容）"
+
+  const partPattern =
+    /Content-Type:\s*([^\s;]+)[\s\S]*?Content-Transfer-Encoding:\s*([^\s]+)[\s\S]*?\r?\n\r?\n([\s\S]*?)(?=(?:\r?\n------|$))/gi
+
+  let match: RegExpExecArray | null
+  while ((match = partPattern.exec(raw))) {
+    const contentType = match[1]?.toLowerCase() ?? ""
+    const encoding = match[2]?.toLowerCase() ?? ""
+    let payload = match[3]?.trim() ?? ""
+    if (!payload) continue
+
+    if (encoding === "base64") {
+      payload = decodeBase64(payload)
+    }
+
+    if (contentType === "text/plain") {
+      return payload
+        .replace(/\r\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim() || payload
+    }
+
+    if (contentType === "text/html") {
+      const plain = payload
+        .replace(/<style[\s\S]*?<\/style>/gi, "")
+        .replace(/<script[\s\S]*?<\/script>/gi, "")
+        .replace(/<\/p>/gi, "\n")
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<[^>]+>/g, "")
+        .replace(/\s*\n\s*/g, "\n")
+        .trim()
+      if (plain) return plain
+    }
+  }
+
+  // fallback: try base64 decode whole body
+  const maybeBase64 = raw.replace(/[\r\n-_=]+/g, "")
+  if (/^[A-Za-z0-9+/]+={0,2}$/.test(maybeBase64)) {
+    const decoded = decodeBase64(maybeBase64)
+    if (decoded) return decoded
+  }
+
+  return raw.trim()
+}
+
+const formatDate = (input: number | string | null) => {
+  if (input == null) return ""
+  const date =
+    typeof input === "number" ? new Date(input) : new Date(String(input))
+  if (Number.isNaN(date.getTime())) return String(input)
+
+  const now = new Date()
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate()
+
+  if (sameDay) {
+    return date.toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+    })
+  }
+
+  return date.toLocaleDateString()
+}
+
+const mapMessage = (item: ApiMessage): MessageItem => {
+  const textBody = extractTextBody(item.body_text)
+  const preview =
+    textBody.replace(/\s+/g, " ").trim().slice(0, 80) || "（无正文内容）"
+
+  return {
+    id: item.id,
+    from: item.from_email ?? "未知发件人",
+    subject: item.subject ?? "（无主题）",
+    preview,
+    dateLabel: formatDate(item.created_at),
+    unread: (item.status ?? "").toLowerCase() === "o1",
+    raw: item,
+    textBody,
+  }
+}
+
+const filteredMessages = computed(() => {
   const query = keyword.value.trim().toLowerCase()
-
-  let data = mails.value
+  let data = messages.value
 
   if (filter.value === "unread") {
     data = data.filter((item) => item.unread)
@@ -70,52 +180,17 @@ const filteredMails = computed(() => {
   )
 })
 
-const formatDate = (source: number | string | null) => {
-  if (source == null) return ""
-
-  const date =
-    typeof source === "number" ? new Date(source) : new Date(source as string)
-  if (Number.isNaN(date.getTime())) return String(source)
-
-  const now = new Date()
-  const isToday =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate()
-
-  if (isToday) {
-    return date.toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-    })
-  }
-
-  return date.toLocaleDateString()
-}
-
-const mapMessage = (item: ApiMessage): MessageItem => {
-  const preview =
-    (item.body_text ?? "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 120) || "（无正文预览）"
-
-  return {
-    id: item.id,
-    from: item.from_email ?? "未知发件人",
-    subject: item.subject ?? "（无主题）",
-    preview,
-    dateLabel: formatDate(item.created_at),
-    unread: (item.status ?? "").toLowerCase() === "o1",
-    raw: item,
-  }
-}
+const activeMessage = computed(() =>
+  messages.value.find((item) => item.id === activeId.value) ?? null,
+)
 
 const fetchMessages = async (offset = 0) => {
   if (!secret.value) return
 
   loadingList.value = true
   listError.value = ""
+
+  const previousActiveId = activeId.value
 
   try {
     const response = await fetch("/api/mailboxes/messages", {
@@ -144,9 +219,7 @@ const fetchMessages = async (offset = 0) => {
           window.sessionStorage.removeItem(STORAGE_SECRET)
           window.sessionStorage.removeItem(STORAGE_MAILBOX)
         }
-        listError.value = message
         router.replace({ name: "home" })
-        return
       }
 
       throw new Error(message)
@@ -168,15 +241,20 @@ const fetchMessages = async (offset = 0) => {
     paging.value = {
       offset: data.paging?.offset ?? offset,
       limit: data.paging?.limit ?? paging.value.limit,
-      next_offset:
+      nextOffset:
         typeof data.paging?.next_offset === "number"
-          ? data.paging?.next_offset
+          ? data.paging.next_offset
           : null,
     }
 
     const mapped = (data.items ?? []).map(mapMessage)
-    mails.value = mapped
-    activeMail.value = mapped[0] ?? null
+    messages.value = mapped
+
+    if (previousActiveId && mapped.some((item) => item.id === previousActiveId)) {
+      activeId.value = previousActiveId
+    } else {
+      activeId.value = null
+    }
   } catch (error) {
     listError.value =
       error instanceof Error ? error.message : "加载收件箱失败，请稍后重试。"
@@ -185,23 +263,59 @@ const fetchMessages = async (offset = 0) => {
   }
 }
 
+const refresh = () => fetchMessages(paging.value.offset)
+
 const openMail = (mail: MessageItem) => {
-  activeMail.value = mail
-  if (mail.unread) {
-    mail.unread = false
-  }
+  activeId.value = mail.id
+  mail.unread = false
 }
 
 const closeMail = () => {
-  activeMail.value = null
+  activeId.value = null
   showDeleteConfirm.value = false
 }
 
-const handleDelete = () => {
-  showDeleteConfirm.value = false
+const requestDelete = () => {
+  if (!activeMessage.value) return
+  showDeleteConfirm.value = true
 }
 
-const refresh = () => fetchMessages(paging.value.offset)
+const deleteMessage = async () => {
+  const message = activeMessage.value
+  if (!message || !secret.value) return
+
+  deleteLoading.value = true
+
+  try {
+    const response = await fetch("/api/mailboxes/messages/delete", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ secret: secret.value, id: message.id }),
+    })
+
+    if (!response.ok) {
+      let messageText = "删除失败，请稍后重试。"
+      try {
+        const data = (await response.json()) as { error?: string }
+        if (data?.error) messageText = data.error
+      } catch {
+        // ignore
+      }
+      throw new Error(messageText)
+    }
+
+    messages.value = messages.value.filter((item) => item.id !== message.id)
+    activeId.value = null
+    showDeleteConfirm.value = false
+  } catch (error) {
+    listError.value =
+      error instanceof Error ? error.message : "删除失败，请稍后重试。"
+  } finally {
+    deleteLoading.value = false
+  }
+}
 
 onMounted(() => {
   if (typeof window === "undefined") return
@@ -234,7 +348,7 @@ onMounted(() => {
         <div>
           <h1 class="text-2xl font-semibold tracking-tight text-foreground">收件箱</h1>
           <p class="text-sm text-muted-foreground">
-            共 {{ mails.length }} 封邮件
+            共 {{ messages.length }} 封邮件
           </p>
         </div>
         <div class="flex min-w-0 items-center gap-2">
@@ -260,12 +374,13 @@ onMounted(() => {
             class="h-10 min-w-[140px] flex-1"
           />
           <Button
-            variant="ghost"
+            variant="outline"
             size="sm"
-            class="shrink-0"
+            class="gap-1"
             :disabled="loadingList"
             @click="refresh"
           >
+            <RotateCw class="size-4" />
             刷新
           </Button>
         </div>
@@ -285,14 +400,14 @@ onMounted(() => {
           {{ listError }}
         </div>
         <div
-          v-else-if="!filteredMails.length"
+          v-else-if="!filteredMessages.length"
           class="py-14 text-center text-sm text-muted-foreground"
         >
           暂无邮件内容。
         </div>
         <ul v-else class="divide-y divide-border/70" data-testid="mail-list">
           <li
-            v-for="mail in filteredMails"
+            v-for="mail in filteredMessages"
             :key="mail.id"
             class="cursor-pointer px-5 py-4 transition hover:bg-accent/50"
             role="button"
@@ -327,27 +442,40 @@ onMounted(() => {
 
     <transition name="fade">
       <div
-        v-if="activeMail"
+        v-if="activeMessage"
         class="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur"
         role="dialog"
         aria-modal="true"
       >
-        <div class="w-full max-w-xl rounded-2xl border border-border bg-card p-6 shadow-lg">
-          <header class="space-y-2">
-            <h2 class="truncate text-xl font-semibold text-foreground">
-              {{ activeMail.subject }}
-            </h2>
-            <p class="truncate text-xs text-muted-foreground">
-              来自：{{ activeMail.raw.from_email ?? "未知发件人" }} ·
-              {{ activeMail.dateLabel }}
-            </p>
+        <div class="w-full max-w-2xl rounded-2xl border border-border bg-card shadow-lg">
+          <header class="flex items-start justify-between gap-4 border-b border-border px-6 py-4">
+            <div class="space-y-2">
+              <p class="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                来自 {{ activeMessage.from }}
+              </p>
+              <h2 class="text-xl font-semibold text-foreground">
+                {{ activeMessage.subject }}
+              </h2>
+              <p class="text-xs text-muted-foreground">
+                {{ activeMessage.dateLabel }}
+              </p>
+            </div>
+            <Button variant="ghost" size="sm" @click="closeMail">关闭</Button>
           </header>
-          <div class="mt-4 whitespace-pre-wrap text-sm leading-6 text-foreground/90">
-            {{ activeMail.raw.body_text ?? "（无正文内容）" }}
-          </div>
-          <footer class="mt-6 flex justify-end gap-2">
-            <Button variant="outline" @click="closeMail">关闭</Button>
-            <Button variant="destructive" @click="showDeleteConfirm = true">删除</Button>
+          <main class="max-h-[60vh] overflow-auto px-6 py-6 text-sm leading-7 text-foreground/90">
+            {{ activeMessage.textBody }}
+          </main>
+          <footer class="flex justify-end gap-2 border-t border-border px-6 py-4">
+            <Button variant="ghost" @click="closeMail">关闭</Button>
+            <Button
+              variant="destructive"
+              class="gap-1"
+              :disabled="deleteLoading"
+              @click="requestDelete"
+            >
+              <Trash2 class="size-4" />
+              删除
+            </Button>
           </footer>
         </div>
       </div>
@@ -363,11 +491,17 @@ onMounted(() => {
         <div class="w-full max-w-sm rounded-2xl border border-border bg-card p-6 shadow-lg">
           <h3 class="text-lg font-semibold text-foreground">确认删除这封邮件？</h3>
           <p class="mt-2 text-sm text-muted-foreground">
-            当前演示环境暂未实现删除功能。
+            删除后无法恢复，请确认已备份重要信息。
           </p>
           <div class="mt-6 flex justify-end gap-2">
             <Button variant="outline" @click="showDeleteConfirm = false">取消</Button>
-            <Button variant="destructive" @click="handleDelete">知道了</Button>
+            <Button
+              variant="destructive"
+              :disabled="deleteLoading"
+              @click="deleteMessage"
+            >
+              删除
+            </Button>
           </div>
         </div>
       </div>

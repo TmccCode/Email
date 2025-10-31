@@ -80,6 +80,6 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
     })
   } catch (error) {
     console.error("TmEmail lookup failure", error)
-    return json(500, { error: "服务器内部错误，请稍后重试" })
+    return json(500, { error: "服务器内部错误，请稍后重�? })
   }
 }
