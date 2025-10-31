@@ -7,12 +7,6 @@ import { ChevronDown, RotateCw, Trash2 } from "lucide-vue-next"
 
 type MailFilter = "all" | "read" | "unread"
 
-interface ApiMailbox {
-  id: number
-  domain: string
-  local_part: string
-}
-
 interface ApiMessage {
   id: number
   to_email: string | null
@@ -214,38 +208,35 @@ const fetchMessages = async (page = 1) => {
   loadingList.value = true
   listError.value = ""
 
+  const requestedLimit = Math.max(1, paging.value.pageSize)
+  const requestedOffset = Math.max(0, (page - 1) * requestedLimit)
+
   try {
-    const payload: Record<string, unknown> = {
-      key: secret.value,
-      page,
-      pageSize: paging.value.pageSize,
-    }
-
-    if (filter.value === "unread") {
-      payload.status = "o1"
-    } else if (filter.value === "read") {
-      payload.status = "o2"
-    }
-
-    const response = await fetch(`${API_BASE}/inbox`, {
+    const response = await fetch(`${API_BASE}/mailboxes/messages`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        secret: secret.value,
+        limit: requestedLimit,
+        offset: requestedOffset,
+      }),
     })
 
     const data = (await response.json()) as {
-      ok: boolean
+      items?: ApiMessage[]
+      paging?: {
+        offset?: number | null
+        limit?: number | null
+        returned?: number | null
+        next_offset?: number | null
+      }
+      error?: string
       msg?: string
-      list?: ApiMessage[]
-      page?: number
-      pageSize?: number
-      total?: number
     }
 
-    if (!response.ok || !data.ok) {
-      const message = data.msg || "加载收件箱失败，请稍后重试。"
+    if (!response.ok) {
       if ([401, 403, 404].includes(response.status)) {
         if (typeof window !== "undefined") {
           window.sessionStorage.removeItem(STORAGE_SECRET)
@@ -253,24 +244,48 @@ const fetchMessages = async (page = 1) => {
         }
         router.replace({ name: "home" })
       }
+      const message =
+        typeof data.error === "string" && data.error.trim()
+          ? data.error.trim()
+          : data.msg || "\u52a0\u8f7d\u6536\u4ef6\u7bb1\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002"
       throw new Error(message)
     }
 
-    const mapped = (data.list ?? []).map(mapMessage)
+    const mapped = (data.items ?? []).map(mapMessage)
     messages.value = mapped
 
+    const limitFromServer = data.paging?.limit
+    const resolvedLimit =
+      typeof limitFromServer === "number" && Number.isFinite(limitFromServer)
+        ? Math.max(1, Math.trunc(limitFromServer))
+        : requestedLimit
+
+    const offsetFromServer = data.paging?.offset
+    const resolvedOffset =
+      typeof offsetFromServer === "number" && Number.isFinite(offsetFromServer)
+        ? Math.max(0, Math.trunc(offsetFromServer))
+        : requestedOffset
+
+    const returnedFromServer = data.paging?.returned
+    const resolvedReturned =
+      typeof returnedFromServer === "number" && Number.isFinite(returnedFromServer)
+        ? Math.max(0, Math.trunc(returnedFromServer))
+        : mapped.length
+
     paging.value = {
-      page: data.page ?? page,
-      pageSize: data.pageSize ?? paging.value.pageSize,
-      total: data.total ?? mapped.length,
+      page: Math.floor(resolvedOffset / resolvedLimit) + 1,
+      pageSize: resolvedLimit,
+      total: resolvedReturned,
     }
 
-    if (!mapped.some((item) => item.id === activeId.value ?? NaN)) {
+    if (!mapped.some((item) => item.id === (activeId.value ?? NaN))) {
       activeId.value = null
     }
   } catch (error) {
     listError.value =
-      error instanceof Error ? error.message : "加载收件箱失败，请稍后重试。"
+      error instanceof Error
+        ? error.message
+        : "\u52a0\u8f7d\u6536\u4ef6\u7bb1\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002"
   } finally {
     loadingList.value = false
   }
@@ -282,7 +297,7 @@ const markMessageAsRead = async (id: number) => {
   if (!secret.value) return
 
   try {
-    const response = await fetch("/api/mailboxes/messages/read", {
+    const response = await fetch(`${API_BASE}/mailboxes/messages/read`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -322,18 +337,22 @@ const deleteMessage = async () => {
 
   deleteLoading.value = true
   try {
-    const response = await fetch(`${API_BASE}/delete`, {
+    const response = await fetch(`${API_BASE}/mailboxes/messages/delete`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify({ key: secret.value, id: msg.id }),
+      body: JSON.stringify({ secret: secret.value, id: msg.id }),
     })
 
-    const data = (await response.json()) as { ok: boolean; msg?: string }
+    const data = (await response.json()) as { success?: boolean; error?: string; msg?: string }
 
-    if (!response.ok || !data.ok) {
-      throw new Error(data.msg || "删除失败，请稍后重试。")
+    if (!response.ok || data.success !== true) {
+      const message =
+        typeof data.error === "string" && data.error.trim()
+          ? data.error.trim()
+          : data.msg || "\u5220\u9664\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002"
+      throw new Error(message)
     }
 
     messages.value = messages.value.filter((item) => item.id !== msg.id)
@@ -377,7 +396,7 @@ watch(filter, (value) => {
         <div>
           <h1 class="text-2xl font-semibold tracking-tight text-foreground">收件箱</h1>
           <p class="text-sm text-muted-foreground">
-            共 {{ messages.length }} 封邮件
+            共 {{ paging.total }} 封邮件
           </p>
         </div>
         <div class="flex min-w-0 items-center gap-2">

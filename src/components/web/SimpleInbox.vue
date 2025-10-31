@@ -24,47 +24,58 @@ const handleSubmit = async (event: Event) => {
   errorMessage.value = ""
 
   try {
-    const response = await fetch(`${API_BASE}/verify`, {
+    const response = await fetch(`${API_BASE}/mailboxes/verify`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify({ key: secret }),
+      body: JSON.stringify({ secret }),
     })
 
     const data = (await response.json()) as {
-      ok: boolean
+      mailbox?: {
+        domain?: string
+        local_part?: string
+        [key: string]: unknown
+      }
       msg?: string
+      error?: string
       email?: string
       [key: string]: unknown
     }
 
-    if (!response.ok || !data.ok) {
-      throw new Error(data.msg || "密钥验证失败，请重试。")
+    const mailbox = data.mailbox
+    if (!response.ok || !mailbox) {
+      const message =
+        typeof data.error === "string" && data.error.trim()
+          ? data.error.trim()
+          : (typeof data.msg === "string" && data.msg.trim()
+              ? data.msg.trim()
+              : data.msg || "\u5bc6\u94a5\u9a8c\u8bc1\u5931\u8d25\uff0c\u8bf7\u91cd\u8bd5\u3002")
+      throw new Error(message)
     }
 
-    const emailAddress = data.email ?? ""
-    let mailboxPayload: unknown = null
-    if (emailAddress.includes("@")) {
-      const [local, domain] = emailAddress.split("@", 2)
-      mailboxPayload = {
-        email: emailAddress,
-        domain,
-        local_part: local,
-      }
-    }
+    const domain = typeof mailbox.domain === "string" ? mailbox.domain.trim() : ""
+    const localPart = typeof mailbox.local_part === "string" ? mailbox.local_part.trim() : ""
+    const emailAddress =
+      domain && localPart
+        ? `${localPart}@${domain}`
+        : typeof data.email === "string"
+          ? data.email
+          : ""
 
     if (typeof window !== "undefined") {
       window.sessionStorage.setItem(STORAGE_SECRET, secret)
-      if (mailboxPayload) {
-        try {
-          window.sessionStorage.setItem(
-            STORAGE_MAILBOX,
-            JSON.stringify(mailboxPayload),
-          )
-        } catch {
-          window.sessionStorage.removeItem(STORAGE_MAILBOX)
-        }
+      try {
+        const payloadToStore = emailAddress
+          ? { ...mailbox, email: emailAddress }
+          : mailbox
+        window.sessionStorage.setItem(
+          STORAGE_MAILBOX,
+          JSON.stringify(payloadToStore),
+        )
+      } catch {
+        window.sessionStorage.removeItem(STORAGE_MAILBOX)
       }
     }
 
