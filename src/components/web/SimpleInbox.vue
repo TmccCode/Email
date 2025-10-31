@@ -24,7 +24,7 @@ const handleSubmit = async (event: Event) => {
   errorMessage.value = ""
 
   try {
-    const response = await fetch(`${API_BASE}/mailboxes/verify`, {
+    const response = await fetch(`${API_BASE}/verify`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
