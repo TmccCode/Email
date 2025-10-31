@@ -388,23 +388,23 @@ watch(filter, (value) => {
       <header class="mb-6 flex flex-col gap-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 class="text-2xl font-semibold tracking-tight text-foreground">???</h1>
+            <h1 class="text-2xl font-semibold tracking-tight text-foreground">收件箱</h1>
             <p class="text-sm text-muted-foreground">
-              ? {{ paging.total }} ???
+              共 {{ paging.total }} 封邮件
             </p>
           </div>
-          <Button variant="outline" size="sm" @click="logout">??</Button>
+          <Button variant="outline" size="sm" @click="logout">退出</Button>
         </div>
         <div class="flex min-w-0 flex-wrap items-center gap-2">
           <div class="relative w-[104px] flex-shrink-0">
             <select
               v-model="filter"
               class="h-10 w-full appearance-none rounded-md border border-input bg-background px-3 pr-8 text-left text-sm text-foreground shadow-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              aria-label="????"
+              aria-label="筛选邮件"
             >
-              <option value="all">??</option>
-              <option value="unread">??</option>
-              <option value="read">??</option>
+              <option value="all">全部</option>
+              <option value="unread">未读</option>
+              <option value="read">已读</option>
             </select>
             <ChevronDown
               class="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
@@ -413,8 +413,8 @@ watch(filter, (value) => {
           <Input
             v-model="keyword"
             data-testid="search"
-            placeholder="????"
-            aria-label="????"
+            placeholder="搜索邮件"
+            aria-label="搜索邮件"
             class="h-10 min-w-[140px] flex-1"
           />
           <Button
@@ -425,7 +425,7 @@ watch(filter, (value) => {
             @click="refresh"
           >
             <RotateCw class="size-4" />
-            ??
+            刷新
           </Button>
         </div>
       </header>
@@ -535,7 +535,7 @@ watch(filter, (value) => {
     <transition name="fade">
       <div
         v-if="showDeleteConfirm"
-        class="fixed inset-0 z-[60] flex items-center justify中心 gap-4 backdrop-blur"
+        class="fixed inset-0 z-[60] flex items-center justify-center gap-4 backdrop-blur"
         role="alertdialog"
         aria-modal="true"
       >
