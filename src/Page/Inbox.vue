@@ -402,16 +402,15 @@ watch(filter, (value) => {
             aria-label="搜索邮件"
             class="h-10 min-w-[140px] flex-1"
           />
-          <Button
-            variant="outline"
-            size="sm"
-            class="gap-1"
+          <button
+            type="button"
+            class="flex h-10 items-center gap-1 rounded-md border border-input bg-background px-4 text-sm font-medium text-foreground shadow-xs transition hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-60"
             :disabled="loadingList"
             @click="refresh"
           >
             <RotateCw class="size-4" />
             刷新
-          </Button>
+          </button>
         </div>
       </header>
 
