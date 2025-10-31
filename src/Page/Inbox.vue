@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue"
+import { computed, onMounted, ref, watch } from "vue"
 import { useRouter } from "vue-router"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -38,11 +38,11 @@ interface MessageItem {
 
 const STORAGE_SECRET = "simpleInboxSecret"
 const STORAGE_MAILBOX = "simpleInboxMailbox"
+const API_BASE = "https://eamilapi.saas-176001.workers.dev"
 
 const router = useRouter()
 
 const secret = ref<string | null>(null)
-const mailbox = ref<ApiMailbox | null>(null)
 const messages = ref<MessageItem[]>([])
 const activeId = ref<number | null>(null)
 
@@ -52,7 +52,7 @@ const keyword = ref("")
 const loadingList = ref(false)
 const listError = ref("")
 
-const paging = ref({ offset: 0, limit: 20, nextOffset: null as number | null })
+const paging = ref({ page: 1, pageSize: 10, total: 0 })
 
 const deleteLoading = ref(false)
 const showDeleteConfirm = ref(false)
@@ -208,34 +208,44 @@ const activeMessage = computed(() =>
   messages.value.find((item) => item.id === activeId.value) ?? null,
 )
 
-const fetchMessages = async (offset = 0) => {
+const fetchMessages = async (page = 1) => {
   if (!secret.value) return
 
   loadingList.value = true
   listError.value = ""
 
   try {
-    const response = await fetch("/api/mailboxes/messages", {
+    const payload: Record<string, unknown> = {
+      key: secret.value,
+      page,
+      pageSize: paging.value.pageSize,
+    }
+
+    if (filter.value === "unread") {
+      payload.status = "o1"
+    } else if (filter.value === "read") {
+      payload.status = "o2"
+    }
+
+    const response = await fetch(`${API_BASE}/inbox`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify({
-        secret: secret.value,
-        limit: paging.value.limit,
-        offset,
-      }),
+      body: JSON.stringify(payload),
     })
 
-    if (!response.ok) {
-      let message = "加载收件箱失败，请稍后重试。"
-      try {
-        const data = (await response.json()) as { error?: string }
-        if (data?.error) message = data.error
-      } catch {
-        // ignore
-      }
+    const data = (await response.json()) as {
+      ok: boolean
+      msg?: string
+      list?: ApiMessage[]
+      page?: number
+      pageSize?: number
+      total?: number
+    }
 
+    if (!response.ok || !data.ok) {
+      const message = data.msg || "加载收件箱失败，请稍后重试。"
       if ([401, 403, 404].includes(response.status)) {
         if (typeof window !== "undefined") {
           window.sessionStorage.removeItem(STORAGE_SECRET)
@@ -243,32 +253,17 @@ const fetchMessages = async (offset = 0) => {
         }
         router.replace({ name: "home" })
       }
-
       throw new Error(message)
     }
 
-    const data = (await response.json()) as {
-      mailbox?: ApiMailbox
-      items?: ApiMessage[]
-      paging?: { offset: number; limit: number; next_offset: number | null }
-    }
-
-    if (data.mailbox) {
-      mailbox.value = data.mailbox
-      if (typeof window !== "undefined") {
-        window.sessionStorage.setItem(STORAGE_MAILBOX, JSON.stringify(data.mailbox))
-      }
-    }
+    const mapped = (data.list ?? []).map(mapMessage)
+    messages.value = mapped
 
     paging.value = {
-      offset: data.paging?.offset ?? offset,
-      limit: data.paging?.limit ?? paging.value.limit,
-      nextOffset:
-        typeof data.paging?.next_offset === "number" ? data.paging.next_offset : null,
+      page: data.page ?? page,
+      pageSize: data.pageSize ?? paging.value.pageSize,
+      total: data.total ?? mapped.length,
     }
-
-    const mapped = (data.items ?? []).map(mapMessage)
-    messages.value = mapped
 
     if (!mapped.some((item) => item.id === activeId.value ?? NaN)) {
       activeId.value = null
@@ -281,7 +276,7 @@ const fetchMessages = async (offset = 0) => {
   }
 }
 
-const refresh = () => fetchMessages(paging.value.offset)
+const refresh = () => fetchMessages(paging.value.page)
 
 const markMessageAsRead = async (id: number) => {
   if (!secret.value) return
@@ -327,23 +322,18 @@ const deleteMessage = async () => {
 
   deleteLoading.value = true
   try {
-    const response = await fetch("/api/mailboxes/messages/delete", {
+    const response = await fetch(`${API_BASE}/delete`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify({ secret: secret.value, id: msg.id }),
+      body: JSON.stringify({ key: secret.value, id: msg.id }),
     })
 
-    if (!response.ok) {
-      let message = "删除失败，请稍后重试。"
-      try {
-        const data = (await response.json()) as { error?: string }
-        if (data?.error) message = data.error
-      } catch {
-        // ignore
-      }
-      throw new Error(message)
+    const data = (await response.json()) as { ok: boolean; msg?: string }
+
+    if (!response.ok || !data.ok) {
+      throw new Error(data.msg || "删除失败，请稍后重试。")
     }
 
     messages.value = messages.value.filter((item) => item.id !== msg.id)
@@ -368,16 +358,15 @@ onMounted(() => {
 
   secret.value = storedSecret
 
-  const storedMailbox = window.sessionStorage.getItem(STORAGE_MAILBOX)
-  if (storedMailbox) {
-    try {
-      mailbox.value = JSON.parse(storedMailbox) as ApiMailbox
-    } catch {
-      window.sessionStorage.removeItem(STORAGE_MAILBOX)
-    }
-  }
+  fetchMessages(1)
+})
 
-  fetchMessages(0)
+watch(filter, (value) => {
+  if (!secret.value) return
+  paging.value.page = 1
+  if (value === "unread" || value === "read" || value === "all") {
+    fetchMessages(1)
+  }
 })
 </script>
 
