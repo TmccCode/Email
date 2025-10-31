@@ -9,26 +9,39 @@ const router = useRouter()
 const accessKey = ref("")
 const loading = ref(false)
 const errorMessage = ref("")
-const expectedKey =
-  (import.meta.env.VITE_INBOX_ACCESS_KEY as string | undefined)?.trim() ?? "sk_inbox_demo"
 
 const handleSubmit = async (event: Event) => {
   event.preventDefault()
-  if (!accessKey.value.trim() || loading.value) return
+  const secret = accessKey.value.trim()
+  if (!secret || loading.value) return
 
   loading.value = true
   errorMessage.value = ""
 
   try {
-    await new Promise((resolve) => setTimeout(resolve, 300))
+    const response = await fetch("/api/mailboxes/verify", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ secret }),
+    })
 
-    if (accessKey.value.trim() !== expectedKey) {
-      throw new Error("invalid key")
+    if (!response.ok) {
+      let message = "密钥验证失败，请重试。"
+      try {
+        const data = (await response.json()) as { error?: string }
+        if (data?.error) message = data.error
+      } catch {
+        // ignore JSON parse error
+      }
+      throw new Error(message)
     }
 
     await router.push({ name: "inbox" })
-  } catch {
-    errorMessage.value = "密钥不匹配，请重新输入。"
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "验证失败，请稍后再试。"
   } finally {
     loading.value = false
   }
@@ -45,7 +58,6 @@ const handleSubmit = async (event: Event) => {
 
     <div class="relative mx-auto flex min-h-screen w-full max-w-6xl items-center px-4 py-6 sm:px-6 lg:px-10">
       <div class="grid w-full gap-8 lg:gap-14 xl:grid-cols-[1.05fr_0.95fr]">
-        <!-- Form first on mobile for better UX -->
         <form
           @submit="handleSubmit"
           class="order-first flex flex-col gap-6 rounded-3xl border border-primary/20 bg-card/90 p-6 shadow-[0_30px_80px_-45px_rgba(59,130,246,0.55)] backdrop-blur-md sm:p-8 lg:order-last lg:p-10"
