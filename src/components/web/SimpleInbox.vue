@@ -13,7 +13,7 @@ const accessKey = ref("")
 const loading = ref(false)
 const errorMessage = ref("")
 
-const API_BASE = "https://eamilapi.saas-176001.workers.dev/api"
+const API_BASE = "https://eamilapi.saas-176001.workers.dev/"
 
 const handleSubmit = async (event: Event) => {
   event.preventDefault()
@@ -24,7 +24,7 @@ const handleSubmit = async (event: Event) => {
   errorMessage.value = ""
 
   try {
-    const response = await fetch(`${API_BASE}/verify`, {
+    const response = await fetch(`${API_BASE}verify`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
