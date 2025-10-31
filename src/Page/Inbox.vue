@@ -213,6 +213,15 @@ const ensureSecret = (message = "请输入访问密钥") => {
   keyModalOpen.value = true
 }
 
+const applySecret = (value: string, persist = true) => {
+  secret.value = value
+  if (persist && typeof window !== "undefined") {
+    window.sessionStorage.setItem(STORAGE_SECRET, value)
+  }
+  keyModalOpen.value = false
+  keyError.value = ""
+}
+
 const handleInvalidSecret = (message: string) => {
   if (typeof window !== "undefined") {
     window.sessionStorage.removeItem(STORAGE_SECRET)
@@ -300,6 +309,10 @@ const openSecretModal = () => {
     window.sessionStorage.removeItem(STORAGE_SECRET)
   }
   secret.value = null
+  mailboxEmail.value = ""
+  messages.value = []
+  paging.value = { page: 1, pageSize: paging.value.pageSize, total: 0 }
+  activeId.value = null
   keyInput.value = ""
   keyError.value = ""
   keyModalOpen.value = true
@@ -314,12 +327,7 @@ const submitSecret = async () => {
 
   keySubmitting.value = true
   try {
-    secret.value = value
-    if (typeof window !== "undefined") {
-      window.sessionStorage.setItem(STORAGE_SECRET, value)
-    }
-    keyModalOpen.value = false
-    keyError.value = ""
+    applySecret(value)
     await fetchMessages(1)
   } finally {
     keySubmitting.value = false
@@ -377,14 +385,30 @@ const deleteMessage = async () => {
 }
 
 onMounted(() => {
-  if (typeof window !== "undefined") {
-    const storedSecret = window.sessionStorage.getItem(STORAGE_SECRET)
-    if (storedSecret) {
-      secret.value = storedSecret
-      fetchMessages(1)
-      return
-    }
+  if (typeof window === "undefined") {
+    ensureSecret()
+    return
   }
+
+  const params = new URLSearchParams(window.location.search)
+  const querySecret = params.get("key")?.trim() || ""
+  if (querySecret) {
+    applySecret(querySecret)
+    params.delete("key")
+    const nextSearch = params.toString()
+    const nextUrl = window.location.pathname + (nextSearch ? `?${nextSearch}` : "") + window.location.hash
+    window.history.replaceState(null, "", nextUrl)
+    fetchMessages(1)
+    return
+  }
+
+  const storedSecret = window.sessionStorage.getItem(STORAGE_SECRET)
+  if (storedSecret) {
+    applySecret(storedSecret, false)
+    fetchMessages(1)
+    return
+  }
+
   ensureSecret()
 })
 
@@ -426,7 +450,7 @@ watch(keyInput, () => {
             </p>
           </div>
           <Button variant="outline" class="h-10 px-4" @click="openSecretModal">
-            返回首页
+            更换密钥
           </Button>
         </div>
         <div class="flex min-w-0 flex-wrap items-center gap-2">
