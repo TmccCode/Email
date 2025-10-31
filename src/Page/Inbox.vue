@@ -65,13 +65,13 @@ const decodeBase64 = (value: string) => {
       const binary = atobFn(cleaned)
       const len = binary.length
       const bytes = new Uint8Array(len)
-      for (let index = 0; index < len; index += 1) {
-        bytes[index] = binary.charCodeAt(index)
+      for (let i = 0; i < len; i += 1) {
+        bytes[i] = binary.charCodeAt(i)
       }
       return new TextDecoder("utf-8", { fatal: false }).decode(bytes)
     }
   } catch {
-    // ignore
+    // ignore errors
   }
   return value
 }
@@ -283,9 +283,32 @@ const fetchMessages = async (offset = 0) => {
 
 const refresh = () => fetchMessages(paging.value.offset)
 
+const markMessageAsRead = async (id: number) => {
+  if (!secret.value) return
+
+  try {
+    const response = await fetch("/api/mailboxes/messages/read", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ secret: secret.value, id }),
+    })
+
+    if (!response.ok) {
+      console.warn("mark read failed", await response.text())
+    }
+  } catch (error) {
+    console.warn("mark read error", error)
+  }
+}
+
 const openMail = (mail: MessageItem) => {
   activeId.value = mail.id
-  mail.unread = false
+  if (mail.unread) {
+    mail.unread = false
+    markMessageAsRead(mail.id)
+  }
 }
 
 const closeMail = () => {
@@ -480,12 +503,12 @@ onMounted(() => {
             <Button variant="ghost" size="sm" @click="closeMail">关闭</Button>
           </header>
           <main class="max-h-[60vh] overflow-auto px-6 py-6 text-sm leading-7 text-foreground/90">
-            <template v-if="activeMessage.htmlBody">
+            <template v-if="activeMessage?.htmlBody">
               <div class="prose prose-sm max-w-none break-words" v-html="activeMessage.htmlBody" />
             </template>
             <template v-else>
               <pre class="whitespace-pre-wrap break-words text-sm leading-7">
-{{ activeMessage.textBody }}
+{{ activeMessage?.textBody }}
               </pre>
             </template>
           </main>
@@ -508,7 +531,7 @@ onMounted(() => {
     <transition name="fade">
       <div
         v-if="showDeleteConfirm"
-        class="fixed inset-0 z-[60] flex items-center justify-center bg-background/90 p-4 backdrop-blur"
+        class="fixed inset-0 z-[60] flex items-center justify中心 gap-4 backdrop-blur"
         role="alertdialog"
         aria-modal="true"
       >

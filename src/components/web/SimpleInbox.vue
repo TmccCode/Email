@@ -13,6 +13,8 @@ const accessKey = ref("")
 const loading = ref(false)
 const errorMessage = ref("")
 
+const API_BASE = "https://eamilapi.saas-176001.workers.dev"
+
 const handleSubmit = async (event: Event) => {
   event.preventDefault()
   const secret = accessKey.value.trim()
@@ -22,34 +24,43 @@ const handleSubmit = async (event: Event) => {
   errorMessage.value = ""
 
   try {
-    const response = await fetch("/api/mailboxes/verify", {
+    const response = await fetch(`${API_BASE}/verify`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify({ secret }),
+      body: JSON.stringify({ key: secret }),
     })
 
-    if (!response.ok) {
-      let message = "密钥验证失败，请重试。"
-      try {
-        const data = (await response.json()) as { error?: string }
-        if (data?.error) message = data.error
-      } catch {
-        // ignore parse error
-      }
-      throw new Error(message)
+    const data = (await response.json()) as {
+      ok: boolean
+      msg?: string
+      email?: string
+      [key: string]: unknown
     }
 
-    const data = (await response.json()) as { mailbox?: unknown }
+    if (!response.ok || !data.ok) {
+      throw new Error(data.msg || "密钥验证失败，请重试。")
+    }
+
+    const emailAddress = data.email ?? ""
+    let mailboxPayload: unknown = null
+    if (emailAddress.includes("@")) {
+      const [local, domain] = emailAddress.split("@", 2)
+      mailboxPayload = {
+        email: emailAddress,
+        domain,
+        local_part: local,
+      }
+    }
 
     if (typeof window !== "undefined") {
       window.sessionStorage.setItem(STORAGE_SECRET, secret)
-      if (data.mailbox) {
+      if (mailboxPayload) {
         try {
           window.sessionStorage.setItem(
             STORAGE_MAILBOX,
-            JSON.stringify(data.mailbox),
+            JSON.stringify(mailboxPayload),
           )
         } catch {
           window.sessionStorage.removeItem(STORAGE_MAILBOX)
