@@ -393,7 +393,7 @@ watch(filter, (value) => {
               共 {{ paging.total }} 封邮件
             </p>
           </div>
-          <Button variant="outline" size="sm" @click="logout">退出</Button>
+          <Button variant="outline" class="h-10 px-4" @click="logout">返回首页</Button>
         </div>
         <div class="flex min-w-0 flex-wrap items-center gap-2">
           <div class="relative w-[104px] flex-shrink-0">
@@ -420,7 +420,7 @@ watch(filter, (value) => {
           <Button
             type="button"
             variant="outline"
-            class="flex items-center gap-1"
+            class="flex h-10 items-center gap-1 px-4"
             :disabled="loadingList"
             @click="refresh"
           >
