@@ -13,7 +13,7 @@ const accessKey = ref("")
 const loading = ref(false)
 const errorMessage = ref("")
 
-const API_BASE = "https://eamilapi.saas-176001.workers.dev/"
+const API_BASE = "https://eamilapi.saas-176001.workers.dev"
 
 const handleSubmit = async (event: Event) => {
   event.preventDefault()
@@ -24,57 +24,46 @@ const handleSubmit = async (event: Event) => {
   errorMessage.value = ""
 
   try {
-    const response = await fetch(`${API_BASE}verify`, {
+    const response = await fetch(`${API_BASE}/verify`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify({ secret }),
+      body: JSON.stringify({ key: secret }),
     })
 
     const data = (await response.json()) as {
-      mailbox?: {
-        domain?: string
-        local_part?: string
-        [key: string]: unknown
-      }
+      ok: boolean
       msg?: string
-      error?: string
       email?: string
       [key: string]: unknown
     }
 
-    const mailbox = data.mailbox
-    if (!response.ok || !mailbox) {
+    if (!response.ok || !data.ok) {
       const message =
-        typeof data.error === "string" && data.error.trim()
-          ? data.error.trim()
-          : (typeof data.msg === "string" && data.msg.trim()
-              ? data.msg.trim()
-              : data.msg || "\u5bc6\u94a5\u9a8c\u8bc1\u5931\u8d25\uff0c\u8bf7\u91cd\u8bd5\u3002")
+        typeof data.msg === "string" && data.msg.trim()
+          ? data.msg.trim()
+          : "密钥验证失败，请重试。"
       throw new Error(message)
     }
 
-    const domain = typeof mailbox.domain === "string" ? mailbox.domain.trim() : ""
-    const localPart = typeof mailbox.local_part === "string" ? mailbox.local_part.trim() : ""
     const emailAddress =
-      domain && localPart
-        ? `${localPart}@${domain}`
-        : typeof data.email === "string"
-          ? data.email
-          : ""
+      typeof data.email === "string" && data.email.includes("@")
+        ? data.email.trim()
+        : ""
 
     if (typeof window !== "undefined") {
       window.sessionStorage.setItem(STORAGE_SECRET, secret)
-      try {
-        const payloadToStore = emailAddress
-          ? { ...mailbox, email: emailAddress }
-          : mailbox
-        window.sessionStorage.setItem(
-          STORAGE_MAILBOX,
-          JSON.stringify(payloadToStore),
-        )
-      } catch {
+      if (emailAddress) {
+        try {
+          window.sessionStorage.setItem(
+            STORAGE_MAILBOX,
+            JSON.stringify({ email: emailAddress }),
+          )
+        } catch {
+          window.sessionStorage.removeItem(STORAGE_MAILBOX)
+        }
+      } else {
         window.sessionStorage.removeItem(STORAGE_MAILBOX)
       }
     }

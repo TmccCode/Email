@@ -32,7 +32,7 @@ interface MessageItem {
 
 const STORAGE_SECRET = "simpleInboxSecret"
 const STORAGE_MAILBOX = "simpleInboxMailbox"
-const API_BASE = "https://eamilapi.saas-176001.workers.dev/api"
+const API_BASE = "https://eamilapi.saas-176001.workers.dev"
 
 const router = useRouter()
 
@@ -202,41 +202,47 @@ const activeMessage = computed(() =>
   messages.value.find((item) => item.id === activeId.value) ?? null,
 )
 
-const fetchMessages = async (page = 1) => {
+const fetchMessages = async (pageParam = 1) => {
   if (!secret.value) return
 
   loadingList.value = true
   listError.value = ""
 
-  const requestedLimit = Math.max(1, paging.value.pageSize)
-  const requestedOffset = Math.max(0, (page - 1) * requestedLimit)
-
   try {
-    const response = await fetch(`${API_BASE}/mailboxes/messages`, {
+    const payload: Record<string, unknown> = {
+      key: secret.value,
+      page: pageParam,
+      pageSize: paging.value.pageSize,
+    }
+
+    if (filter.value === "unread") {
+      payload.status = "o1"
+    } else if (filter.value === "read") {
+      payload.status = "o2"
+    }
+
+    const response = await fetch(`${API_BASE}/inbox`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify({
-        secret: secret.value,
-        limit: requestedLimit,
-        offset: requestedOffset,
-      }),
+      body: JSON.stringify(payload),
     })
 
     const data = (await response.json()) as {
-      items?: ApiMessage[]
-      paging?: {
-        offset?: number | null
-        limit?: number | null
-        returned?: number | null
-        next_offset?: number | null
-      }
-      error?: string
+      ok: boolean
       msg?: string
+      list?: ApiMessage[]
+      page?: number
+      pageSize?: number
+      total?: number
     }
 
-    if (!response.ok) {
+    if (!response.ok || !data.ok) {
+      const message =
+        typeof data.msg === "string" && data.msg.trim()
+          ? data.msg.trim()
+          : "加载收件箱失败，请稍后重试。"
       if ([401, 403, 404].includes(response.status)) {
         if (typeof window !== "undefined") {
           window.sessionStorage.removeItem(STORAGE_SECRET)
@@ -244,38 +250,16 @@ const fetchMessages = async (page = 1) => {
         }
         router.replace({ name: "home" })
       }
-      const message =
-        typeof data.error === "string" && data.error.trim()
-          ? data.error.trim()
-          : data.msg || "\u52a0\u8f7d\u6536\u4ef6\u7bb1\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002"
       throw new Error(message)
     }
 
-    const mapped = (data.items ?? []).map(mapMessage)
+    const mapped = (data.list ?? []).map(mapMessage)
     messages.value = mapped
 
-    const limitFromServer = data.paging?.limit
-    const resolvedLimit =
-      typeof limitFromServer === "number" && Number.isFinite(limitFromServer)
-        ? Math.max(1, Math.trunc(limitFromServer))
-        : requestedLimit
-
-    const offsetFromServer = data.paging?.offset
-    const resolvedOffset =
-      typeof offsetFromServer === "number" && Number.isFinite(offsetFromServer)
-        ? Math.max(0, Math.trunc(offsetFromServer))
-        : requestedOffset
-
-    const returnedFromServer = data.paging?.returned
-    const resolvedReturned =
-      typeof returnedFromServer === "number" && Number.isFinite(returnedFromServer)
-        ? Math.max(0, Math.trunc(returnedFromServer))
-        : mapped.length
-
     paging.value = {
-      page: Math.floor(resolvedOffset / resolvedLimit) + 1,
-      pageSize: resolvedLimit,
-      total: resolvedReturned,
+      page: data.page ?? pageParam,
+      pageSize: data.pageSize ?? paging.value.pageSize,
+      total: data.total ?? mapped.length,
     }
 
     if (!mapped.some((item) => item.id === (activeId.value ?? NaN))) {
@@ -283,9 +267,7 @@ const fetchMessages = async (page = 1) => {
     }
   } catch (error) {
     listError.value =
-      error instanceof Error
-        ? error.message
-        : "\u52a0\u8f7d\u6536\u4ef6\u7bb1\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002"
+      error instanceof Error ? error.message : "加载收件箱失败，请稍后重试。"
   } finally {
     loadingList.value = false
   }
@@ -297,12 +279,12 @@ const markMessageAsRead = async (id: number) => {
   if (!secret.value) return
 
   try {
-    const response = await fetch(`${API_BASE}/mailboxes/messages/read`, {
+    const response = await fetch(`${API_BASE}/read`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify({ secret: secret.value, id }),
+      body: JSON.stringify({ key: secret.value, id }),
     })
 
     if (!response.ok) {
@@ -337,21 +319,21 @@ const deleteMessage = async () => {
 
   deleteLoading.value = true
   try {
-    const response = await fetch(`${API_BASE}/mailboxes/messages/delete`, {
+    const response = await fetch(`${API_BASE}/delete`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify({ secret: secret.value, id: msg.id }),
+      body: JSON.stringify({ key: secret.value, id: msg.id }),
     })
 
-    const data = (await response.json()) as { success?: boolean; error?: string; msg?: string }
+    const data = (await response.json()) as { ok: boolean; msg?: string }
 
-    if (!response.ok || data.success !== true) {
+    if (!response.ok || !data.ok) {
       const message =
-        typeof data.error === "string" && data.error.trim()
-          ? data.error.trim()
-          : data.msg || "\u5220\u9664\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002"
+        typeof data.msg === "string" && data.msg.trim()
+          ? data.msg.trim()
+          : "删除失败，请稍后重试。"
       throw new Error(message)
     }
 
