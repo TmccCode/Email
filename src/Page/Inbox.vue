@@ -1,11 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue"
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Label } from "@/components/ui/label"
 import {
   Card,
-  CardContent,
   CardDescription,
   CardFooter,
   CardHeader,
@@ -38,7 +36,6 @@ interface MessageItem {
   raw: ApiMessage
 }
 
-const STORAGE_SECRET = "simpleInboxSecret"
 const API_BASE = "https://eamilapi.saas-176001.workers.dev"
 
 const secret = ref<string | null>(null)
@@ -57,10 +54,14 @@ const paging = ref({ page: 1, pageSize: 10, total: 0 })
 const deleteLoading = ref(false)
 const showDeleteConfirm = ref(false)
 
-const keyModalOpen = ref(false)
-const keyInput = ref("")
-const keySubmitting = ref(false)
-const keyError = ref("")
+const MISSING_SECRET_MESSAGE = "缺少访问密钥，请确认链接中包含 ?key=您的密钥"
+
+const getSecretFromLocation = (): string | null => {
+  if (typeof window === "undefined") return null
+  const params = new URLSearchParams(window.location.search)
+  const value = params.get("key")?.trim()
+  return value && value.length > 0 ? value : null
+}
 
 const decodeBase64 = (value: string) => {
   const cleaned = value.replace(/\s+/g, "")
@@ -206,36 +207,28 @@ const activeMessage = computed(() =>
   messages.value.find((item) => item.id === activeId.value) ?? null,
 )
 
-const ensureSecret = (message = "请输入访问密钥") => {
-  listError.value = message
-  keyError.value = message
-  keyInput.value = ""
-  keyModalOpen.value = true
-}
-
-const applySecret = (value: string, persist = true) => {
-  secret.value = value
-  if (persist && typeof window !== "undefined") {
-    window.sessionStorage.setItem(STORAGE_SECRET, value)
-  }
-  keyModalOpen.value = false
-  keyError.value = ""
-}
+const errorTitle = computed(() => {
+  const message = listError.value
+  if (!message) return ""
+  if (message.includes("密钥无效")) return "密钥无效"
+  if (!secret.value) return "缺少访问密钥"
+  return "加载失败"
+})
 
 const handleInvalidSecret = (message: string) => {
-  if (typeof window !== "undefined") {
-    window.sessionStorage.removeItem(STORAGE_SECRET)
-  }
   secret.value = null
+  mailboxEmail.value = ""
   messages.value = []
   paging.value = { page: 1, pageSize: paging.value.pageSize, total: 0 }
-  mailboxEmail.value = ""
-  ensureSecret(message)
+  activeId.value = null
+  listError.value = message
+  loadingList.value = false
+  showDeleteConfirm.value = false
 }
 
 const fetchMessages = async (pageParam = 1) => {
   if (!secret.value) {
-    ensureSecret()
+    handleInvalidSecret(MISSING_SECRET_MESSAGE)
     return
   }
 
@@ -300,38 +293,21 @@ const fetchMessages = async (pageParam = 1) => {
   }
 }
 
-const refresh = () => {
-  fetchMessages(paging.value.page)
-}
-
-const openSecretModal = () => {
-  if (typeof window !== "undefined") {
-    window.sessionStorage.removeItem(STORAGE_SECRET)
-  }
-  secret.value = null
-  mailboxEmail.value = ""
-  messages.value = []
-  paging.value = { page: 1, pageSize: paging.value.pageSize, total: 0 }
-  activeId.value = null
-  keyInput.value = ""
-  keyError.value = ""
-  keyModalOpen.value = true
-}
-
-const submitSecret = async () => {
-  const value = keyInput.value.trim()
-  if (!value) {
-    keyError.value = "请输入访问密钥"
+const handlePopstate = () => {
+  const nextSecret = getSecretFromLocation()
+  if (!nextSecret) {
+    handleInvalidSecret(MISSING_SECRET_MESSAGE)
     return
   }
 
-  keySubmitting.value = true
-  try {
-    applySecret(value)
-    await fetchMessages(1)
-  } finally {
-    keySubmitting.value = false
+  if (nextSecret !== secret.value) {
+    secret.value = nextSecret
+    fetchMessages(1)
   }
+}
+
+const refresh = () => {
+  fetchMessages(paging.value.page)
 }
 
 const openMessage = (item: MessageItem) => {
@@ -385,31 +361,24 @@ const deleteMessage = async () => {
 }
 
 onMounted(() => {
-  if (typeof window === "undefined") {
-    ensureSecret()
+  const initialSecret = getSecretFromLocation()
+  if (!initialSecret) {
+    handleInvalidSecret(MISSING_SECRET_MESSAGE)
     return
   }
 
-  const params = new URLSearchParams(window.location.search)
-  const querySecret = params.get("key")?.trim() || ""
-  if (querySecret) {
-    applySecret(querySecret)
-    params.delete("key")
-    const nextSearch = params.toString()
-    const nextUrl = window.location.pathname + (nextSearch ? `?${nextSearch}` : "") + window.location.hash
-    window.history.replaceState(null, "", nextUrl)
-    fetchMessages(1)
-    return
-  }
+  secret.value = initialSecret
+  fetchMessages(1)
 
-  const storedSecret = window.sessionStorage.getItem(STORAGE_SECRET)
-  if (storedSecret) {
-    applySecret(storedSecret, false)
-    fetchMessages(1)
-    return
+  if (typeof window !== "undefined") {
+    window.addEventListener("popstate", handlePopstate)
   }
+})
 
-  ensureSecret()
+onBeforeUnmount(() => {
+  if (typeof window !== "undefined") {
+    window.removeEventListener("popstate", handlePopstate)
+  }
 })
 
 watch(filter, (value, prev) => {
@@ -430,9 +399,6 @@ watch(
   },
 )
 
-watch(keyInput, () => {
-  if (keyError.value) keyError.value = ""
-})
 </script>
 
 <template>
@@ -448,10 +414,10 @@ watch(keyInput, () => {
             <p v-if="mailboxEmail" class="text-xs text-muted-foreground">
               当前邮箱：{{ mailboxEmail }}
             </p>
+            <p v-else-if="secret" class="text-xs text-muted-foreground">
+              当前密钥：{{ secret }}
+            </p>
           </div>
-          <Button variant="outline" class="h-10 px-4" @click="openSecretModal">
-            更换密钥
-          </Button>
         </div>
         <div class="flex min-w-0 flex-wrap items-center gap-2">
           <div class="relative w-[140px] flex-shrink-0">
@@ -495,11 +461,29 @@ watch(keyInput, () => {
         >
           正在加载邮件...
         </div>
-        <div
-          v-else-if="listError"
-          class="py-14 text-center text-sm text-destructive"
-        >
-          {{ listError }}
+        <div v-else-if="listError" class="py-14">
+          <Card class="mx-auto max-w-sm text-center shadow-none">
+            <CardHeader class="space-y-2">
+              <CardTitle class="text-base text-destructive">
+                {{ errorTitle || "加载失败" }}
+              </CardTitle>
+              <CardDescription class="text-sm leading-6 text-muted-foreground">
+                {{ listError }}
+              </CardDescription>
+            </CardHeader>
+            <CardFooter v-if="secret" class="flex justify-center">
+              <Button
+                type="button"
+                variant="outline"
+                class="flex h-10 items-center gap-1 px-4"
+                :disabled="loadingList"
+                @click="refresh"
+              >
+                <RotateCw class="size-4" />
+                重试
+              </Button>
+            </CardFooter>
+          </Card>
         </div>
         <div
           v-else-if="!filteredMessages.length"
@@ -610,63 +594,6 @@ watch(keyInput, () => {
             </Button>
           </div>
         </div>
-      </div>
-    </transition>
-
-    <transition name="fade">
-      <div
-        v-if="keyModalOpen"
-        class="fixed inset-0 z-[70] flex items-center justify-center bg-background/80 p-4 backdrop-blur"
-        role="dialog"
-        aria-modal="true"
-      >
-        <Card class="w-full max-w-sm">
-          <CardHeader>
-            <CardTitle class="text-lg font-semibold text-foreground">输入访问密钥</CardTitle>
-            <CardDescription>请输入后台生成的密钥以读取收件箱。</CardDescription>
-          </CardHeader>
-          <CardContent class="space-y-3">
-            <div class="space-y-2">
-              <Label for="secret-input">访问密钥</Label>
-              <Input
-                id="secret-input"
-                v-model="keyInput"
-                type="password"
-                placeholder="sk_inbox_..."
-                autocomplete="one-time-code"
-                inputmode="text"
-              />
-            </div>
-            <p v-if="keyError" class="text-sm text-destructive">
-              {{ keyError }}
-            </p>
-          </CardContent>
-          <CardFooter class="flex gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              class="flex-1"
-              :disabled="keySubmitting"
-              @click="keyModalOpen = false"
-            >
-              取消
-            </Button>
-            <Button
-              type="button"
-              class="flex-1"
-              :disabled="keySubmitting"
-              @click="submitSecret"
-            >
-              <template v-if="keySubmitting">
-                <RotateCw class="mr-2 size-4 animate-spin" />
-                提交中...
-              </template>
-              <template v-else>
-                保存密钥
-              </template>
-            </Button>
-          </CardFooter>
-        </Card>
       </div>
     </transition>
   </section>
