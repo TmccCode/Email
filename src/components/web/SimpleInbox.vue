@@ -5,6 +5,9 @@ import { Inbox, KeyRound, Loader2, ShieldCheck } from "lucide-vue-next"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 
+const STORAGE_SECRET = "simpleInboxSecret"
+const STORAGE_MAILBOX = "simpleInboxMailbox"
+
 const router = useRouter()
 const accessKey = ref("")
 const loading = ref(false)
@@ -38,10 +41,30 @@ const handleSubmit = async (event: Event) => {
       throw new Error(message)
     }
 
+    const data = (await response.json()) as { mailbox?: unknown }
+
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem(STORAGE_SECRET, secret)
+      if (data.mailbox) {
+        try {
+          window.sessionStorage.setItem(
+            STORAGE_MAILBOX,
+            JSON.stringify(data.mailbox),
+          )
+        } catch {
+          window.sessionStorage.removeItem(STORAGE_MAILBOX)
+        }
+      }
+    }
+
     await router.push({ name: "inbox" })
   } catch (error) {
     errorMessage.value =
       error instanceof Error ? error.message : "验证失败，请稍后再试。"
+    if (typeof window !== "undefined") {
+      window.sessionStorage.removeItem(STORAGE_SECRET)
+      window.sessionStorage.removeItem(STORAGE_MAILBOX)
+    }
   } finally {
     loading.value = false
   }
