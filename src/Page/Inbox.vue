@@ -31,8 +31,9 @@ interface MessageItem {
   preview: string
   dateLabel: string
   unread: boolean
-  raw: ApiMessage
   textBody: string
+  htmlBody: string | null
+  raw: ApiMessage
 }
 
 const STORAGE_SECRET = "simpleInboxSecret"
@@ -51,10 +52,10 @@ const keyword = ref("")
 const loadingList = ref(false)
 const listError = ref("")
 
+const paging = ref({ offset: 0, limit: 20, nextOffset: null as number | null })
+
 const deleteLoading = ref(false)
 const showDeleteConfirm = ref(false)
-
-const paging = ref({ offset: 0, limit: 20, nextOffset: null as number | null })
 
 const decodeBase64 = (value: string) => {
   const cleaned = value.replace(/\s+/g, "")
@@ -75,11 +76,32 @@ const decodeBase64 = (value: string) => {
   return value
 }
 
-const extractTextBody = (raw: string | null) => {
-  if (!raw) return "（无正文内容）"
+const sanitizeHtml = (source: string) => {
+  try {
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(source, "text/html")
+    doc.querySelectorAll("script,style").forEach((el) => el.remove())
+    doc.querySelectorAll("*").forEach((el) => {
+      Array.from(el.attributes).forEach((attr) => {
+        if (attr.name.startsWith("on")) {
+          el.removeAttribute(attr.name)
+        }
+      })
+    })
+    return doc.body.innerHTML
+  } catch {
+    return source
+  }
+}
+
+const extractBodies = (raw: string | null): { text: string; html: string | null } => {
+  if (!raw) return { text: "（无正文内容）", html: null }
 
   const partPattern =
     /Content-Type:\s*([^\s;]+)[\s\S]*?Content-Transfer-Encoding:\s*([^\s]+)[\s\S]*?\r?\n\r?\n([\s\S]*?)(?=(?:\r?\n------|$))/gi
+
+  let plain: string | null = null
+  let html: string | null = null
 
   let match: RegExpExecArray | null
   while ((match = partPattern.exec(raw))) {
@@ -92,62 +114,64 @@ const extractTextBody = (raw: string | null) => {
       payload = decodeBase64(payload)
     }
 
-    if (contentType === "text/plain") {
-      return payload
-        .replace(/\r\n/g, "\n")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim() || payload
+    if (contentType === "text/plain" && !plain) {
+      plain =
+        payload
+          .replace(/\r\n/g, "\n")
+          .replace(/\n{3,}/g, "\n\n")
+          .trim() || payload
     }
 
-    if (contentType === "text/html") {
-      const plain = payload
-        .replace(/<style[\s\S]*?<\/style>/gi, "")
-        .replace(/<script[\s\S]*?<\/script>/gi, "")
-        .replace(/<\/p>/gi, "\n")
-        .replace(/<br\s*\/?>/gi, "\n")
-        .replace(/<[^>]+>/g, "")
-        .replace(/\s*\n\s*/g, "\n")
-        .trim()
-      if (plain) return plain
+    if (contentType === "text/html" && !html) {
+      html = sanitizeHtml(payload)
     }
   }
 
-  // fallback: try base64 decode whole body
-  const maybeBase64 = raw.replace(/[\r\n-_=]+/g, "")
-  if (/^[A-Za-z0-9+/]+={0,2}$/.test(maybeBase64)) {
-    const decoded = decodeBase64(maybeBase64)
-    if (decoded) return decoded
+  if (!plain && html) {
+    plain = html
+      .replace(/<style[\s\S]*?<\/style>/gi, "")
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/<\/p>/gi, "\n")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/\s*\n\s*/g, "\n")
+      .trim()
   }
 
-  return raw.trim()
+  if (!plain) {
+    const maybeBase64 = raw.replace(/[\r\n-_=]+/g, "")
+    if (/^[A-Za-z0-9+/]+={0,2}$/.test(maybeBase64)) {
+      plain = decodeBase64(maybeBase64)
+    }
+  }
+
+  return {
+    text: plain?.trim() || raw.trim() || "（无正文内容）",
+    html,
+  }
 }
 
 const formatDate = (input: number | string | null) => {
   if (input == null) return ""
-  const date =
-    typeof input === "number" ? new Date(input) : new Date(String(input))
+  const date = new Date(input)
   if (Number.isNaN(date.getTime())) return String(input)
 
   const now = new Date()
-  const sameDay =
+  const isToday =
     date.getFullYear() === now.getFullYear() &&
     date.getMonth() === now.getMonth() &&
     date.getDate() === now.getDate()
 
-  if (sameDay) {
-    return date.toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-    })
+  if (isToday) {
+    return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
   }
 
   return date.toLocaleDateString()
 }
 
 const mapMessage = (item: ApiMessage): MessageItem => {
-  const textBody = extractTextBody(item.body_text)
-  const preview =
-    textBody.replace(/\s+/g, " ").trim().slice(0, 80) || "（无正文内容）"
+  const bodies = extractBodies(item.body_text)
+  const preview = bodies.text.replace(/\s+/g, " ").trim().slice(0, 80) || "（无正文内容）"
 
   return {
     id: item.id,
@@ -156,13 +180,14 @@ const mapMessage = (item: ApiMessage): MessageItem => {
     preview,
     dateLabel: formatDate(item.created_at),
     unread: (item.status ?? "").toLowerCase() === "o1",
+    textBody: bodies.text,
+    htmlBody: bodies.html,
     raw: item,
-    textBody,
   }
 }
 
 const filteredMessages = computed(() => {
-  const query = keyword.value.trim().toLowerCase()
+  const q = keyword.value.trim().toLowerCase()
   let data = messages.value
 
   if (filter.value === "unread") {
@@ -171,12 +196,11 @@ const filteredMessages = computed(() => {
     data = data.filter((item) => !item.unread)
   }
 
-  if (!query) return data
-
+  if (!q) return data
   return data.filter((item) =>
     [item.subject, item.from, item.preview]
       .filter(Boolean)
-      .some((value) => value.toLowerCase().includes(query)),
+      .some((value) => value.toLowerCase().includes(q)),
   )
 })
 
@@ -189,8 +213,6 @@ const fetchMessages = async (offset = 0) => {
 
   loadingList.value = true
   listError.value = ""
-
-  const previousActiveId = activeId.value
 
   try {
     const response = await fetch("/api/mailboxes/messages", {
@@ -242,17 +264,13 @@ const fetchMessages = async (offset = 0) => {
       offset: data.paging?.offset ?? offset,
       limit: data.paging?.limit ?? paging.value.limit,
       nextOffset:
-        typeof data.paging?.next_offset === "number"
-          ? data.paging.next_offset
-          : null,
+        typeof data.paging?.next_offset === "number" ? data.paging.next_offset : null,
     }
 
     const mapped = (data.items ?? []).map(mapMessage)
     messages.value = mapped
 
-    if (previousActiveId && mapped.some((item) => item.id === previousActiveId)) {
-      activeId.value = previousActiveId
-    } else {
+    if (!mapped.some((item) => item.id === activeId.value ?? NaN)) {
       activeId.value = null
     }
   } catch (error) {
@@ -281,32 +299,31 @@ const requestDelete = () => {
 }
 
 const deleteMessage = async () => {
-  const message = activeMessage.value
-  if (!message || !secret.value) return
+  const msg = activeMessage.value
+  if (!msg || !secret.value) return
 
   deleteLoading.value = true
-
   try {
     const response = await fetch("/api/mailboxes/messages/delete", {
       method: "POST",
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify({ secret: secret.value, id: message.id }),
+      body: JSON.stringify({ secret: secret.value, id: msg.id }),
     })
 
     if (!response.ok) {
-      let messageText = "删除失败，请稍后重试。"
+      let message = "删除失败，请稍后重试。"
       try {
         const data = (await response.json()) as { error?: string }
-        if (data?.error) messageText = data.error
+        if (data?.error) message = data.error
       } catch {
         // ignore
       }
-      throw new Error(messageText)
+      throw new Error(message)
     }
 
-    messages.value = messages.value.filter((item) => item.id !== message.id)
+    messages.value = messages.value.filter((item) => item.id !== msg.id)
     activeId.value = null
     showDeleteConfirm.value = false
   } catch (error) {
@@ -463,7 +480,14 @@ onMounted(() => {
             <Button variant="ghost" size="sm" @click="closeMail">关闭</Button>
           </header>
           <main class="max-h-[60vh] overflow-auto px-6 py-6 text-sm leading-7 text-foreground/90">
-            {{ activeMessage.textBody }}
+            <template v-if="activeMessage.htmlBody">
+              <div class="prose prose-sm max-w-none break-words" v-html="activeMessage.htmlBody" />
+            </template>
+            <template v-else>
+              <pre class="whitespace-pre-wrap break-words text-sm leading-7">
+{{ activeMessage.textBody }}
+              </pre>
+            </template>
           </main>
           <footer class="flex justify-end gap-2 border-t border-border px-6 py-4">
             <Button variant="ghost" @click="closeMail">关闭</Button>
@@ -491,7 +515,7 @@ onMounted(() => {
         <div class="w-full max-w-sm rounded-2xl border border-border bg-card p-6 shadow-lg">
           <h3 class="text-lg font-semibold text-foreground">确认删除这封邮件？</h3>
           <p class="mt-2 text-sm text-muted-foreground">
-            删除后无法恢复，请确认已备份重要信息。
+            删除后无法恢复，请确认已保留重要信息。
           </p>
           <div class="mt-6 flex justify-end gap-2">
             <Button variant="outline" @click="showDeleteConfirm = false">取消</Button>
@@ -518,5 +542,9 @@ onMounted(() => {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+.prose :where(pre) {
+  white-space: pre-wrap;
 }
 </style>
