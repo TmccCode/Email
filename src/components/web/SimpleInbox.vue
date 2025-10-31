@@ -13,7 +13,7 @@ const accessKey = ref("")
 const loading = ref(false)
 const errorMessage = ref("")
 
-const API_BASE = "https://eamilapi.saas-176001.workers.dev"
+const API_BASE = "https://eamilapi.saas-176001.workers.dev/api"
 
 const handleSubmit = async (event: Event) => {
   event.preventDefault()

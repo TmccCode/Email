@@ -32,7 +32,7 @@ interface MessageItem {
 
 const STORAGE_SECRET = "simpleInboxSecret"
 const STORAGE_MAILBOX = "simpleInboxMailbox"
-const API_BASE = "https://eamilapi.saas-176001.workers.dev"
+const API_BASE = "https://eamilapi.saas-176001.workers.dev/api"
 
 const router = useRouter()
 
