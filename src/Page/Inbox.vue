@@ -51,6 +51,17 @@ const paging = ref({ page: 1, pageSize: 10, total: 0 })
 const deleteLoading = ref(false)
 const showDeleteConfirm = ref(false)
 
+const logout = () => {
+  if (typeof window !== "undefined") {
+    window.sessionStorage.removeItem(STORAGE_SECRET)
+    window.sessionStorage.removeItem(STORAGE_MAILBOX)
+  }
+  secret.value = null
+  messages.value = []
+  activeId.value = null
+  router.replace({ name: "home" })
+}
+
 const decodeBase64 = (value: string) => {
   const cleaned = value.replace(/\s+/g, "")
   try {
@@ -374,23 +385,26 @@ watch(filter, (value) => {
 <template>
   <section class="min-h-screen bg-background">
     <div class="mx-auto w-full max-w-3xl px-4 py-10 md:px-6">
-      <header class="mb-6 flex flex-col gap-3">
-        <div>
-          <h1 class="text-2xl font-semibold tracking-tight text-foreground">收件箱</h1>
-          <p class="text-sm text-muted-foreground">
-            共 {{ paging.total }} 封邮件
-          </p>
+      <header class="mb-6 flex flex-col gap-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 class="text-2xl font-semibold tracking-tight text-foreground">???</h1>
+            <p class="text-sm text-muted-foreground">
+              ? {{ paging.total }} ???
+            </p>
+          </div>
+          <Button variant="outline" size="sm" @click="logout">??</Button>
         </div>
-        <div class="flex min-w-0 items-center gap-2">
+        <div class="flex min-w-0 flex-wrap items-center gap-2">
           <div class="relative w-[104px] flex-shrink-0">
             <select
               v-model="filter"
               class="h-10 w-full appearance-none rounded-md border border-input bg-background px-3 pr-8 text-left text-sm text-foreground shadow-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              aria-label="筛选邮件"
+              aria-label="????"
             >
-              <option value="all">全部</option>
-              <option value="unread">未读</option>
-              <option value="read">已读</option>
+              <option value="all">??</option>
+              <option value="unread">??</option>
+              <option value="read">??</option>
             </select>
             <ChevronDown
               class="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
@@ -399,19 +413,20 @@ watch(filter, (value) => {
           <Input
             v-model="keyword"
             data-testid="search"
-            placeholder="搜索邮件"
-            aria-label="搜索邮件"
+            placeholder="????"
+            aria-label="????"
             class="h-10 min-w-[140px] flex-1"
           />
-          <button
+          <Button
             type="button"
-            class="flex h-10 items-center gap-1 rounded-md border border-input bg-background px-4 text-sm font-medium text-foreground shadow-xs transition hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-60"
+            variant="outline"
+            class="flex items-center gap-1"
             :disabled="loadingList"
             @click="refresh"
           >
             <RotateCw class="size-4" />
-            刷新
-          </button>
+            ??
+          </Button>
         </div>
       </header>
 
