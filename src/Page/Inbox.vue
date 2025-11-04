@@ -7,7 +7,6 @@ import {
   CardDescription,
   CardFooter,
   CardHeader,
-  CardTitle,
 } from "@/components/ui/card"
 import { ChevronDown, RotateCw, Trash2 } from "lucide-vue-next"
 
@@ -54,7 +53,7 @@ const paging = ref({ page: 1, pageSize: 10, total: 0 })
 const deleteLoading = ref(false)
 const showDeleteConfirm = ref(false)
 
-const MISSING_SECRET_MESSAGE = "缺少访问密钥，请确认链接中包含 ?key=您的密钥"
+const MISSING_SECRET_MESSAGE = "缺少访问密钥,请检查链接是否正确!"
 
 const getSecretFromLocation = (): string | null => {
   if (typeof window === "undefined") return null
@@ -207,14 +206,6 @@ const activeMessage = computed(() =>
   messages.value.find((item) => item.id === activeId.value) ?? null,
 )
 
-const errorTitle = computed(() => {
-  const message = listError.value
-  if (!message) return ""
-  if (message.includes("密钥无效")) return "密钥无效"
-  if (!secret.value) return "缺少访问密钥"
-  return "加载失败"
-})
-
 const handleInvalidSecret = (message: string) => {
   secret.value = null
   mailboxEmail.value = ""
@@ -307,7 +298,8 @@ const handlePopstate = () => {
 }
 
 const refresh = () => {
-  fetchMessages(paging.value.page)
+  console.log("-------",fetchMessages(paging.value.page))
+  
 }
 
 const openMessage = (item: MessageItem) => {
@@ -464,9 +456,6 @@ watch(
         <div v-else-if="listError" class="py-14">
           <Card class="mx-auto max-w-sm text-center shadow-none">
             <CardHeader class="space-y-2">
-              <CardTitle class="text-base text-destructive">
-                {{ errorTitle || "加载失败" }}
-              </CardTitle>
               <CardDescription class="text-sm leading-6 text-muted-foreground">
                 {{ listError }}
               </CardDescription>
