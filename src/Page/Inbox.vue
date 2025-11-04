@@ -99,6 +99,14 @@ const sanitizeHtml = (source: string) => {
   }
 }
 
+const escapeHtml = (source: string) =>
+  source
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+
 const extractBodies = (raw: string | null): { text: string; html: string | null } => {
   if (!raw) return { text: "（无正文内容）", html: null }
 
@@ -218,6 +226,14 @@ const filteredMessages = computed(() => {
 const activeMessage = computed(() =>
   messages.value.find((item) => item.id === activeId.value) ?? null,
 )
+
+const activeMessageHtml = computed(() => {
+  const current = activeMessage.value
+  if (!current) return ""
+  if (current.htmlBody) return current.htmlBody
+  const escaped = escapeHtml(current.textBody || "")
+  return escaped.replace(/\n/g, "<br>")
+})
 
 const handleInvalidSecret = (message: string) => {
   secret.value = null
@@ -548,14 +564,7 @@ watch(
             <Button variant="ghost" size="sm" @click="closeMessage">关闭</Button>
           </header>
           <main class="max-h-[60vh] overflow-auto px-6 py-6 text-sm leading-7 text-foreground/90">
-            <template v-if="activeMessage?.htmlBody">
-              <div class="prose prose-sm max-w-none break-words" v-html="activeMessage.htmlBody" />
-            </template>
-            <template v-else>
-              <pre class="whitespace-pre-wrap break-words text-sm leading-7">
-{{ activeMessage?.textBody }}
-              </pre>
-            </template>
+            <div class="prose prose-sm max-w-none break-words" v-html="activeMessageHtml" />
           </main>
           <footer class="flex justify-end gap-2 border-t border-border px-6 py-4">
             <Button variant="ghost" @click="closeMessage">关闭</Button>
