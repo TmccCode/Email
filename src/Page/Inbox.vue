@@ -132,6 +132,15 @@ const extractBodies = (raw: string | null): { text: string; html: string | null 
     }
   }
 
+  const trimmedRaw = raw.trim()
+
+  if (!html) {
+    const looksLikeHtml = /<(html|body|head|table|div|span|p)\b/i.test(trimmedRaw)
+    if (looksLikeHtml) {
+      html = sanitizeHtml(trimmedRaw)
+    }
+  }
+
   if (!plain && html) {
     plain = html
       .replace(/<style[\s\S]*?<\/style>/gi, "")
@@ -150,8 +159,12 @@ const extractBodies = (raw: string | null): { text: string; html: string | null 
     }
   }
 
+  if (!plain && trimmedRaw) {
+    plain = trimmedRaw
+  }
+
   return {
-    text: plain?.trim() || raw?.trim() || "（无正文内容）",
+    text: plain?.trim() || trimmedRaw || "（无正文内容）",
     html,
   }
 }
